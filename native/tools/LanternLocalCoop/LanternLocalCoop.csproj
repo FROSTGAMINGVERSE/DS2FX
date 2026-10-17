@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <Target Name="RequireLibrary" BeforeTargets="BeforeBuild"><Error Condition="'$(SoulsFormatsAssembly)' == ''" Text="Supply the installed SoulsFormats assembly path." /></Target>
+  <ItemGroup><Reference Include="SoulsFormats"><HintPath>$(SoulsFormatsAssembly)</HintPath></Reference></ItemGroup>
+</Project>

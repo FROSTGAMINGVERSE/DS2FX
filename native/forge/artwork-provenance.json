@@ -1,0 +1,8 @@
+{
+  "tool": "built-in image_gen",
+  "prompt": "Use case: stylized-concept. Asset type: production background artwork for Forge, a Souls-inspired in-game mod configuration menu. Generate a wide 16:9 high resolution image with no text, no logos, no UI controls. An ancient black iron forge in a ruined gothic stone sanctuary, a subtle glowing ember seam near the bottom center, very dark charcoal slate and aged muted bronze, wisps of ash and smoke, refined engraved border ornament restricted to outer edges. Cinematic, restrained, premium dark fantasy. The center and left two thirds must remain extremely dark, quiet and low contrast so live ivory text and UI controls remain legible. Small warmer amber light on the far right edge, no bright flames, no characters, no swords obscuring content. This is a subtle texture/backdrop for a translucent overlay, not a busy illustration. Keep all wording absent.",
+  "font": "Cinzel, Google Fonts, SIL Open Font License",
+  "font_url": "https://github.com/google/fonts/tree/main/ofl/cinzel",
+  "artwork": "forge-background.png",
+  "title": "Original editable GDI+ text rendering, tests/forge.cpp --title"
+}

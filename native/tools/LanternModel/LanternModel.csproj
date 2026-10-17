@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <SoulsFormatsProject Condition="'$(SoulsFormatsProject)' == ''">F:\Modding\Dark Souls 2\research\SoulsFormats\SoulsFormats\SoulsFormats.csproj</SoulsFormatsProject>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="$(SoulsFormatsProject)" /></ItemGroup>
+</Project>

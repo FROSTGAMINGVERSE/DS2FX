@@ -1,0 +1,9 @@
+build/
+**/bin/
+**/obj/
+*.pdb
+*.dll
+*.exe
+local/
+Game/
+native/mods/wayfarer_lantern/model/
