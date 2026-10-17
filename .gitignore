@@ -7,3 +7,4 @@ build/
 local/
 Game/
 native/mods/wayfarer_lantern/model/
+*.log

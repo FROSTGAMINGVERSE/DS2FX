@@ -17,7 +17,7 @@ Install Visual Studio 2022 C++ desktop tools, Windows SDK and CMake 3.24+. In an
 ```bat
 cmake -S native -B build -A x64
 cmake --build build --config Release --target ds2fx_core ds2fx_bridge_core ds2fx_auto
-ctest --test-dir build -C Release --output-on-failure
+cmake --build build --config Release
 ```
 
 The public graphics callback contract is documented in native/docs/GRAPHICS-BRIDGE.md and native/sdk. The separately licensed asset utility's complete corresponding source, dependency source and build instructions are in Asset-Tool-Source.zip and the Core release. No game data or NVIDIA/Lighting Engine/Seamless binaries are included in this source repository.
@@ -31,3 +31,4 @@ FROST FX authored code is source available; no blanket third-party licence is gr
 ## A.I. Use
 
 AI tools assisted with development, documentation and some visual artwork. FROST FX directs and reviews the work; testing and compatibility limits are stated above.
+
