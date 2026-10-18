@@ -37,6 +37,12 @@ HRESULT STDMETHODCALLTYPE present(IDXGISwapChain* chain,UINT interval,UINT flags
 }
 bool attach() {
     if(slot)return true;
+    // The manual ReShade backend already observes the game's real swap chain.
+    // Creating a second hardware probe through the injected DS2LE factory can
+    // trigger a nested resize while its non-recursive renderer lock is held.
+    // Leave the backend untouched and let clients use their authenticated
+    // manual-runtime adapter. A failed registration must have no side effects.
+    if(GetModuleHandleW(L"ReShade68.dll"))return false;
     HWND window=CreateWindowExW(0,L"STATIC",L"DS2FX graphics probe",WS_POPUP,0,0,2,2,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
     if(!window)return false;
     DXGI_SWAP_CHAIN_DESC desc{};desc.BufferDesc.Width=desc.BufferDesc.Height=2;desc.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;

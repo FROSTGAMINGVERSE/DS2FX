@@ -15,7 +15,7 @@
 namespace fx {
 namespace fs = std::filesystem;
 inline constexpr char version[] = "0.3.0-alpha.1";
-inline constexpr char package_version[] = "0.5.41-alpha.1";
+inline constexpr char package_version[] = "0.5.42-alpha.1";
 inline fs::path utf8_path(const std::string& s) { return fs::path(std::u8string(s.begin(),s.end())); }
 inline constexpr char game_hash[] = "0045931b8914504531b7864a9488d396dc50cbaf524964016e1d69c3d1173131";
 inline void require(bool ok, const std::string& message) { if (!ok) throw std::runtime_error(message); }

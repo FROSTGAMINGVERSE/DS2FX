@@ -36,6 +36,12 @@ forced HDR swap-chain color space. Ordering relative to external effects depends
 on their own Present chain. The previous pinned ReShade HUD adapter remains as
 the compatibility fallback when the public bridge is unavailable.
 
+Core 0.5.42-alpha.1 detects an already-loaded manual `ReShade68.dll` before
+creating the probe and returns zero without touching its swap chain. This avoids
+an auxiliary hardware device/resize entering the DS2LE renderer during startup.
+The HUD uses its authenticated manual-runtime fallback in that configuration;
+the standalone Core callback path is unchanged when this backend is absent.
+
 `examples/graphics_callback.cpp` is a complete observation-only plugin example.
 Build with the normal DS2FX module template and package under
 `DS2FX/Plugins/graphics-example`. It is a developer example, disabled and absent

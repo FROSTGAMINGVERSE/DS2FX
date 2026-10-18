@@ -10,12 +10,18 @@ void render(const DS2FX_GraphicsFrame* frame,void* user){
     check(user==&frames && frame && frame->size==sizeof(*frame) && frame->version==1 && frame->context && frame->back_buffer && frame->width==16 && frame->height==16 && frame->sequence>last,"Invalid public graphics frame");
     last=frame->sequence;++frames;
 }
-int main(){try {
+int main(int argc,char** argv){try {
     auto owner=GetModuleHandleW(nullptr);DS2FX_GraphicsCallback callback{sizeof(callback),1,render,&frames};
     check(!fx::graphics::subscribe(nullptr,&callback),"Missing owner accepted");
     auto bad=callback;bad.version=2;check(!fx::graphics::subscribe(owner,&bad),"Unknown API accepted");
     bad=callback;bad.size=0;check(!fx::graphics::subscribe(owner,&bad),"Truncated API accepted");
     check(!fx::graphics::subscribe(GetModuleHandleW(L"kernel32.dll"),&callback),"Foreign callback owner accepted");
+    if(argc==2) {
+        const auto backend=LoadLibraryA(argv[1]);
+        check(backend && GetModuleHandleW(L"ReShade68.dll")==backend,"Manual backend fixture did not load");
+        check(!fx::graphics::subscribe(owner,&callback),"Manual backend registration created a competing probe");
+        check(FreeLibrary(backend)!=FALSE,"Manual backend fixture did not unload");
+    }
     HWND window=CreateWindowExW(0,L"STATIC",L"DS2FX bridge test",WS_POPUP,0,0,16,16,nullptr,nullptr,owner,nullptr);
     DXGI_SWAP_CHAIN_DESC desc{};desc.BufferDesc.Width=desc.BufferDesc.Height=16;desc.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.SampleDesc.Count=1;desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;desc.BufferCount=1;desc.OutputWindow=window;desc.Windowed=TRUE;
