@@ -26,9 +26,17 @@ The public graphics callback contract is documented in native/docs/GRAPHICS-BRID
 
 Experimental release. Native/GPU fixtures and loader preflights are separate from in-game lifecycle and multiplayer certification. Original-server online play is unsupported. Optional official Seamless is separately downloaded and version gated; remote Lantern replication remains unproven.
 
-Core 0.5.42 avoids an auxiliary graphics probe when manual ReShade68 is present.
-A reference character and custom HUD loaded successfully. Intermittent in-world
-stalls are still being investigated; this is not a general freeze/stutter fix.
+Core 0.5.46 prepares content before the official Seamless child's executable
+entry, then verifies and retains those routes during full initialization. The
+older FROST character loaded and reloaded with the full reference setup: Core,
+Remastered HUD, Wearable Lantern, Seeker of Fire, official Seamless, DS2LE,
+OptiScaler and ReShade. The user confirmed the custom HUD and Lantern
+lighting/stowing. Root Builder cleanup completed, but the game reported an
+access-violation exit (`0xC0000005`), which remains under investigation.
+Long-session stability and remote-peer multiplayer remain unproved; this is
+not a general freeze/stutter or welcome-popup fix. See
+[early content startup](native/docs/EARLY-CONTENT-STARTUP.md) for the contract and
+owned fixture checks. The 0.5.42 manual ReShade68 graphics-probe fix is retained.
 
 FROST FX authored code is source available; no blanket third-party licence is granted. See native/THIRD-PARTY.md, native/licenses, vendor licence files and Asset-Tool-Source.zip for the separately licensed components. Preserve their notices and terms.
 

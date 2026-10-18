@@ -3,6 +3,11 @@
 std::wstring seen;
 extern "C" __declspec(dllexport) __declspec(noinline) uintptr_t DS2FX_TestResolve(uintptr_t context,fx::content::GameString* s) {
     seen=s?std::wstring(s->data,s->length):L"null";
+    // Owned relative-path fixture: require routes to resolve the staged file.
+    // This fixture does not model the engine's archive-mount return semantics.
+    if(seen.size()>1 && seen[1]==L':')return 0;
+    if(seen.starts_with(L"./"))
+        fx::require(fx::fs::is_regular_file(fx::content::mount_root/fx::fs::path(seen.substr(2))),"Relative mount did not resolve the intended fixture file");
     return context+17;
 }
 extern "C" __declspec(dllexport) void DS2FX_TestGrow(fx::content::GameString* s,size_t capacity,size_t) {
@@ -85,28 +90,58 @@ int main() {
         manifest(line+fx::hash_file(sfx)+"\tsfx/sfx9999.ffxbnd.dcx\n");
         fx::require(c::load(root).size()==2,"Mixed parameter/effect manifest rejected");
         c::install(root,log);
+        {
+            const auto prior_original=c::original;const auto prior_mods=c::active_mods.size();
+            c::install(root,log);
+            fx::require(c::original==prior_original && c::active_mods.size()==prior_mods,"Runtime initialization replaced an early hook or duplicated its selected mods");
+            std::ofstream(file)<<"changed after early content installation";
+            manifest(fx::hash_file(file)+"\tParam/test.param\n"+fx::hash_file(sfx)+"\tsfx/sfx9999.ffxbnd.dcx\n");
+            bool changed=false;try{c::install(root,log);}catch(...){changed=true;}
+            fx::require(changed,"Changed pre-entry selection silently replaced the running routes");
+            std::ofstream(file)<<"fixture content";
+            manifest(line+fx::hash_file(sfx)+"\tsfx/sfx9999.ffxbnd.dcx\n");
+        }
+        fx::require(c::mounted_target(file).starts_with(L"./Content/"),"Native relative mount prefix missing");
+        for(const auto& outside:{root.parent_path()/"outside.param",root.parent_path()/(root.filename().wstring()+L"-other")/"file.param"}) {
+            bool rejected=false;try{c::mounted_target(outside);}catch(...){rejected=true;}
+            fx::require(rejected,"Content target outside exact game mount accepted");
+        }
+        {
+            const auto absolute=fx::fs::absolute(file).wstring();c::GameString path{new wchar_t[absolute.size()+1],nullptr,absolute.size(),absolute.size()+1};
+            std::copy_n(absolute.c_str(),absolute.size()+1,path.data);
+            fx::require(DS2FX_TestResolve(25,&path)==0,"Owned native mount fixture incorrectly accepted a Windows drive");delete[] path.data;
+        }
         auto resolve=reinterpret_cast<c::Resolve>(GetProcAddress(GetModuleHandleW(nullptr),"DS2FX_TestResolve"));
         for(auto name:{L"gamedata:/Param/test.param",L"title:/PARAM/TEST.PARAM",L"gamedata:/Param/other.param",L"save:/Param/test.param"}) {
             size_t n=wcslen(name); c::GameString s{new wchar_t[n+1],nullptr,n,n+1}; std::copy_n(name,n+1,s.data);
             auto result=resolve(25,&s); fx::require(result==42,"Original resolver not preserved");
             bool match=std::wstring(name).find(L"other")==std::wstring::npos && !std::wstring(name).starts_with(L"save:");
-            fx::require(seen==(match?fx::fs::absolute(file).wstring():std::wstring(name)),"Incorrect routing");
+            fx::require(seen==(match?c::mounted_target(fx::fs::absolute(file)):std::wstring(name)),"Incorrect routing");
             delete[] s.data;
         }
         fx::require(resolve(25,nullptr)==42 && seen==L"null","Null passthrough broken");
         fx::require(redirects==0 && c::reported.empty(),"Default asset routing performed diagnostic logging");
+        c::capture_requests=true;
+        {
+            const auto name=L"gamedata:/Param/test.param";size_t n=wcslen(name);
+            c::GameString path{new wchar_t[n+1],nullptr,n,n+1};std::copy_n(name,n+1,path.data);
+            fx::require(resolve(25,&path)==42 && seen==c::mounted_target(file),"Request capture changed native routing");delete[] path.data;
+            const auto& event=c::request_trace[0];
+            fx::require(c::request_count==1 && event.phase==2 && event.result==42 && std::wstring(event.input)==name && std::wstring(event.output)==c::mounted_target(file),"Bounded request capture omitted actual input/output/result");
+        }
+        c::capture_requests=false;
         c::trace_redirects=true;
         for(int attempt=0;attempt<2;++attempt) {
             const auto name=L"gamedata:/Param/test.param";size_t n=wcslen(name);
             c::GameString s{new wchar_t[n+1],nullptr,n,n+1};std::copy_n(name,n+1,s.data);
-            fx::require(resolve(25,&s)==42 && seen==fx::fs::absolute(file).wstring(),"Tracing changed routing");delete[] s.data;
+            fx::require(resolve(25,&s)==42 && seen==c::mounted_target(fx::fs::absolute(file)),"Tracing changed routing");delete[] s.data;
         }
         fx::require(redirects==1,"Opt-in tracing did not report exactly once per asset");
         c::trace_redirects=false;
 
         for(auto name:{L"gamedata:/sfx/sfx9999.ffxbnd.dcx",L"title:/SFX/SFX9999.FFXBND.DCX"}) {
             size_t n=wcslen(name);c::GameString s{new wchar_t[n+1],nullptr,n,n+1};std::copy_n(name,n+1,s.data);
-            fx::require(resolve(25,&s)==42 && seen==fx::fs::absolute(sfx).wstring(),"Native global effect binder routing failed");
+            fx::require(resolve(25,&s)==42 && seen==c::mounted_target(fx::fs::absolute(sfx)),"Native global effect binder routing failed");
             delete[] s.data;
         }
         fx::require(MH_DisableHook(c::address)==MH_OK,"Cannot disable fixture hook");
@@ -119,7 +154,7 @@ int main() {
             size_t n=wcslen(name);c::GameString s{new wchar_t[n+1],nullptr,n,n+1};std::copy_n(name,n+1,s.data);
             fx::require(resolve(25,&s)==42,"Map routing changed original return");
             bool hit=!std::wstring(name).starts_with(L"save:")&&std::wstring(name).find(L"m10_04")==std::wstring::npos;
-            fx::require(seen==(hit?fx::fs::absolute(map).wstring():std::wstring(name)),"Map routing/passthrough failed");delete[] s.data;
+            fx::require(seen==(hit?c::mounted_target(fx::fs::absolute(map)):std::wstring(name)),"Map routing/passthrough failed");delete[] s.data;
         }
         fx::require(MH_DisableHook(c::address)==MH_OK,"Cannot disable map fixture hook");
         auto modernroot=root/"modern-test";auto modern=modernroot/"Content"/"modern-souls-2";
@@ -164,7 +199,7 @@ int main() {
             c::routes=c::resolved_routes(modernroot);
             const wchar_t* name=L"gamedata:/enc_regulation.bnd.dcx";
             const size_t n=wcslen(name);c::GameString path{new wchar_t[n+1],nullptr,n,n+1};std::copy_n(name,n+1,path.data);
-            fx::require(resolve(25,&path)==42&&seen==fx::fs::absolute(lantern/"integration"/"merged.bnd.dcx").wstring(),"Runtime hook discarded the audited Lantern integration");
+            fx::require(resolve(25,&path)==42&&seen==c::mounted_target(fx::fs::absolute(lantern/"integration"/"merged.bnd.dcx")),"Runtime hook discarded the audited Lantern integration");
             delete[] path.data;
 
         }

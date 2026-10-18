@@ -2,6 +2,7 @@
 #include "forge_options.h"
 #include "../sdk/ds2fx_api.h"
 #include "graphics_bridge.h"
+#include "seamless_welcome.h"
 #include "observation.h"
 #include "hud_observation.h"
 #include "hud_presentation.h"
@@ -76,6 +77,7 @@ void log_message(const char* id, const char* message) {
     if (logfile) { logfile << GetTickCount64() << " [" << (id ? id : "?") << "] " << (message ? message : "") << '\n'; logfile.flush(); }
 }
 void open_log() {
+    if(logfile.is_open()){fx::require(logfile.good(),"Existing runtime log failed");return;}
     wchar_t local[32768];
     auto n = GetEnvironmentVariableW(L"LOCALAPPDATA",local,32768);
     fx::require(n && n < 32768,"LOCALAPPDATA unavailable");
@@ -280,7 +282,21 @@ DWORD WINAPI observe(void*) {
     try {
         DS2FX_PlayerState previous{sizeof(DS2FX_PlayerState),0,0,0,0};
         uint64_t number = 0;
+        bool mounted_read_reported=false;
         while (!stop) {
+            fx::content::report_requests(log_message);
+            if(!mounted_read_reported && fx::content::mounted_resolved.load(std::memory_order_relaxed)) {
+                mounted_read_reported=true;
+                log_message("content","Native game mount accepted a manifest-backed relative asset path");
+            }
+#if defined(DS2FX_SEAMLESS_BRIDGE) && !defined(DS2FX_FIXTURE)
+            static uint64_t welcome_count=0;
+            const auto accepted_welcomes=fx::seamless_welcome::suppressed();
+            if(accepted_welcomes!=welcome_count) {
+                welcome_count=accepted_welcomes;
+                log_message("core",("Routine Seamless welcome skipped through native accepted transition; count="+std::to_string(welcome_count)).c_str());
+            }
+#endif
             auto next = sample(++number);
             auto next_hud = sample_hud(next);
             const auto next_form=fx::hud_observation::sample_form(base_slot,last_player,next,
@@ -498,6 +514,28 @@ DS2FX_EXPORT uint32_t DS2FX_GetLanternCharges(DS2FX_LanternCharges* output) {
     return 0; // Charges retired. Export stays present for API2 compatibility.
 }
 #endif
+DS2FX_EXPORT DWORD WINAPI DS2FX_ContentBootstrap(void*) {
+    try {
+        open_log();const auto executable=fx::module_path();
+#ifdef DS2FX_FIXTURE
+        fx::require(executable.filename()==L"ds2fx_bridge_fixture_host.exe","Early content fixture requires its owned host");
+        fx::require(!fx::fs::exists(executable.parent_path()/"crt-ran.txt"),"Fixture CRT already started before early content installation");
+        const auto delay=std::min<UINT>(30000,GetPrivateProfileIntW(L"Fixture",L"ContentDelayMs",0,(executable.parent_path()/L"fixture.ini").c_str()));
+        if(delay)Sleep(delay);
+        fx::require(!fx::fs::exists(executable.parent_path()/"crt-ran.txt"),"Fixture CRT ran while early content initialization was pending");
+#else
+        fx::require(executable.filename()==L"DarkSoulsII.exe" && fx::hash_file(executable)==fx::game_hash,"Unsupported early content executable");
+#endif
+#ifdef DS2FX_SEAMLESS_BRIDGE
+        fx::bridge::loaded_official(executable.parent_path());
+#endif
+        const auto root=fx::module_path(self).parent_path();
+        fx::content::capture_requests=GetPrivateProfileIntW(L"Diagnostics",L"ContentRequests",0,(root/L"diagnostics.ini").c_str())==1;
+        fx::content::install(root,log_message);
+        log_message("content","PRE-ENTRY CONTENT READY; official primary thread remains held; no player, HUD, graphics, save or network adapters started");
+        return 1;
+    }catch(const std::exception& e) {log_message("content",("PRE-ENTRY CONTENT FAILED: "+std::string(e.what())).c_str());return 0;}
+}
 DS2FX_EXPORT DWORD WINAPI DS2FX_Bootstrap(void*) {
     if (InterlockedCompareExchange(&booted,1,0) != 0) return 0;
     try {
@@ -521,10 +559,19 @@ DS2FX_EXPORT DWORD WINAPI DS2FX_Bootstrap(void*) {
         observation_interval=fx::forge::setting(fx::forge::settings_file(),L"ds2fx-core",L"ObservationIntervalMs",100,50,100);
         verbose_lantern_telemetry=fx::forge::setting(fx::forge::settings_file(),L"ds2fx-core",L"VerboseLanternTelemetry",GetPrivateProfileIntW(L"Diagnostics",L"LanternTelemetry",0,diagnostics.c_str()),0,1)==1;
         fx::content::trace_redirects=GetPrivateProfileIntW(L"Diagnostics",L"ContentRedirects",0,diagnostics.c_str())==1;
+        fx::content::capture_requests=GetPrivateProfileIntW(L"Diagnostics",L"ContentRequests",0,diagnostics.c_str())==1;
 #ifdef DS2FX_SEAMLESS_BRIDGE
         // Authenticate the vendor before any optional native adapter is prepared.
         fx::bridge::loaded_official(executable.parent_path());
         fx::bridge::select(fx::discover(root / "Plugins")); // Reject altered recognized DLLs before hooks.
+#ifndef DS2FX_FIXTURE
+        try {
+            if(fx::seamless_welcome::install(GetPrivateProfileIntW(L"Presentation",L"SkipSeamlessWelcome",0,diagnostics.c_str())==1))
+                log_message("core","Routine Seamless welcome auto-acknowledgement armed; exact official text only; errors remain native");
+        } catch(const std::exception& e) {
+            log_message("core",("Welcome presentation adapter unavailable; original notice retained: "+std::string(e.what())).c_str());
+        }
+#endif
 #endif
 #ifndef DS2FX_FIXTURE
         if(GetPrivateProfileIntW(L"Research",L"ObservePlayerMessages",0,diagnostics.c_str())==1) {
@@ -703,6 +750,11 @@ DS2FX_EXPORT DWORD WINAPI DS2FX_Bootstrap(void*) {
         }
 #endif
         fx::content::install(root,log_message);
+        if(fx::content::capture_requests) {
+            uintptr_t manager=0;int scene=-1;
+            if(fx::read(base_slot,manager) && manager)fx::read(manager+0x24ac,scene);
+            log_message("content-diagnostic",("Content hook installed at native scene="+std::to_string(scene)).c_str());
+        }
 #if defined(DS2FX_LANTERN_RESEARCH) && !defined(DS2FX_FIXTURE)
         const auto jump_config=root/L"jump-states.ini";
         if(GetPrivateProfileIntW(L"JumpStates",L"Enabled",0,jump_config.c_str())==1) {

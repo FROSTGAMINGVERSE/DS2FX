@@ -1,5 +1,6 @@
 #include "seamless_contract.h"
 #include "content_pack.h"
+#include "initial_thread_hold.h"
 #ifdef DS2FX_NUCLEUS
 #include "nucleus_context.h"
 #endif
@@ -47,24 +48,48 @@ uintptr_t remote_load_library(DWORD pid) {
 DWORD call(HANDLE process,uintptr_t function,void* parameter) {
     fx::Handle thread(CreateRemoteThread(process,nullptr,0,reinterpret_cast<LPTHREAD_START_ROUTINE>(function),parameter,0,nullptr));
     fx::require(thread.value!=nullptr,"DS2FX initialization thread failed; Win32="+std::to_string(GetLastError()));
-    // A timeout does not free a path still in use or terminate a live game.
-    fx::require(WaitForSingleObject(thread.value,20000)==WAIT_OBJECT_0,"DS2FX initialization timed out; close the game normally");
+    // Never abandon an initialization thread. In the early phase, unwinding
+    // would release our primary-thread hold while content hooks still install.
+    auto waited=WaitForSingleObject(thread.value,20000);
+    if(waited!=WAIT_OBJECT_0) {
+        try { log("Initialization exceeded 20 seconds; retaining ownership until remote initialization completes or game exits"); }catch(...){}
+        const HANDLE watched[]{thread.value,process};
+        bool wait_error_logged=false;
+        for(;;) {
+            waited=WaitForMultipleObjects(2,watched,FALSE,1000);
+            if(waited==WAIT_OBJECT_0 || waited==WAIT_OBJECT_0+1)break;
+            if(waited==WAIT_FAILED) {
+                if(!wait_error_logged) {
+                    const auto error=GetLastError();
+                    try { log("Initialization wait failed; retaining ownership and checking thread/process separately; Win32="+std::to_string(error)); }catch(...){}
+                    wait_error_logged=true;
+                }
+                if(WaitForSingleObject(thread.value,0)==WAIT_OBJECT_0){waited=WAIT_OBJECT_0;break;}
+                if(WaitForSingleObject(process,0)==WAIT_OBJECT_0){waited=WAIT_OBJECT_0+1;break;}
+                Sleep(1000);
+            }
+        }
+        fx::require(waited==WAIT_OBJECT_0,"Game exited while DS2FX initialization was pending");
+    }
     DWORD result=0; fx::require(GetExitCodeThread(thread.value,&result)!=0,"Cannot read DS2FX initialization result");
     return result;
 }
-void inject(HANDLE process,DWORD pid,const fx::fs::path& core) {
-    fx::require(!module(pid,L"ds2fx_core.dll").base && !module(pid,L"ds2fx_bridge_core.dll").base,"DS2FX is already loaded; refusing a second runtime");
+void inject(HANDLE process,DWORD pid,const fx::fs::path& core,bool content_only=false,bool continue_owned=false) {
+    auto existing=module(pid,L"ds2fx_bridge_core.dll");
+    fx::require(!module(pid,L"ds2fx_core.dll").base && (!existing.base || (continue_owned && fx::fs::equivalent(existing.path,core))),"DS2FX is already loaded; refusing a second runtime");
     HMODULE mapped=LoadLibraryExW(core.c_str(),nullptr,DONT_RESOLVE_DLL_REFERENCES);
     fx::require(mapped!=nullptr,"Cannot inspect bridge core");
-    auto entry=GetProcAddress(mapped,"DS2FX_Bootstrap");
+    auto entry=GetProcAddress(mapped,content_only?"DS2FX_ContentBootstrap":"DS2FX_Bootstrap");
     auto offset=reinterpret_cast<uintptr_t>(entry)-reinterpret_cast<uintptr_t>(mapped); FreeLibrary(mapped);
     fx::require(entry!=nullptr,"Bridge bootstrap export missing");
+    if(!existing.base) {
     const auto path=core.wstring(); SIZE_T bytes=(path.size()+1)*sizeof(wchar_t),written=0;
     auto remote=VirtualAllocEx(process,nullptr,bytes,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE);
     fx::require(remote!=nullptr,"Cannot allocate DS2FX path");
     fx::require(WriteProcessMemory(process,remote,path.c_str(),bytes,&written) && written==bytes,"Cannot pass DS2FX path");
     call(process,remote_load_library(pid),remote);
     VirtualFreeEx(process,remote,0,MEM_RELEASE);
+    }
     auto loaded=module(pid,L"ds2fx_bridge_core.dll");
     fx::require(loaded.base && fx::fs::equivalent(loaded.path,core),"Bridge core did not load from the expected path");
     fx::require(call(process,loaded.base+offset,nullptr)==1,"DS2FX bridge bootstrap refused; inspect runtime log and close the game");
@@ -106,6 +131,10 @@ int seamless_main(int argc,wchar_t** argv) {
 int wmain(int argc,wchar_t** argv) {
 #endif
     fx::Handle launcher_process, game_process;
+    // Keep a validated hold alive through failure handling. A rejected early
+    // bootstrap must not let the primary thread load a partial content set.
+    std::unique_ptr<fx::launch::InitialThreadHold> startup_hold;
+    bool early_content_ready=false;
     bool check=false;
     try {
         fx::fs::path game,check_root,check_official;
@@ -149,6 +178,7 @@ int wmain(int argc,wchar_t** argv) {
         journal.open(logs/("bridge-"+std::to_string(GetCurrentProcessId())+".log"));
         log("Launching unmodified official Seamless launcher; optional local Lantern hooks, no automatic session join");
         const auto official=dir/"ds2sc_launcher.exe";
+        const auto entry_rva=fx::launch::entry_rva(game);
         std::wstring command=L"\""+official.wstring()+L"\"";
         STARTUPINFOW si{}; si.cb=sizeof(si); PROCESS_INFORMATION pi{};
         fx::require(CreateProcessW(official.c_str(),command.data(),nullptr,nullptr,FALSE,0,nullptr,dir.c_str(),&si,&pi),"Official launcher could not start; Win32="+std::to_string(GetLastError()));
@@ -163,14 +193,29 @@ int wmain(int argc,wchar_t** argv) {
                 fx::require(h!=nullptr,"Cannot open official game child; Win32="+std::to_string(GetLastError()));
                 game_process.value=h; game_pid=p.th32ProcessID;
                 fx::require(creation(h)>=launched && fx::fs::equivalent(image_path(h),game),"Official child identity mismatch");
+                startup_hold=fx::launch::InitialThreadHold::acquire(h,game_pid,entry_rva);
                 break;
             }
-            if(!game_process.value) Sleep(100);
+            if(!game_process.value) Sleep(1);
         }
         fx::require(game_process.value!=nullptr,"No direct game child found from official launcher within 120 seconds; no arbitrary process attached");
         log("Verified official game child pid="+std::to_string(game_pid));
-        uint64_t stable=0;
+        log("Captured official CREATE_SUSPENDED primary thread before executable entry; tid="+std::to_string(startup_hold->id));
         while(GetTickCount64()<deadline) {
+            fx::require(WaitForSingleObject(game_process.value,0)==WAIT_TIMEOUT,"Official child exited during pre-entry setup");
+            const auto seam=module(game_pid,L"ds2sc.dll");
+            if(seam.base && fx::fs::equivalent(seam.path,dir/"SeamlessCoop"/"ds2sc.dll"))break;
+            Sleep(10);
+        }
+        fx::require(module(game_pid,L"ds2sc.dll").base!=0,"Official Seamless module did not load before primary-thread resume");
+        preflight(game,root,dir);
+        inject(game_process.value,game_pid,root/"ds2fx_bridge_core.dll",true,false);
+        startup_hold->release();
+        early_content_ready=true;
+        log("Pre-entry content ready; released exactly one owned suspension; official launcher remains unchanged");
+        const auto runtime_deadline=GetTickCount64()+120000;
+        uint64_t stable=0;
+        while(GetTickCount64()<runtime_deadline) {
             fx::require(WaitForSingleObject(game_process.value,0)==WAIT_TIMEOUT,"Official game exited before bridge initialization");
             auto seam=module(game_pid,L"ds2sc.dll");
             bool ready=seam.base && fx::fs::equivalent(seam.path,dir/"SeamlessCoop"/"ds2sc.dll");
@@ -181,10 +226,10 @@ int wmain(int argc,wchar_t** argv) {
             else stable=0;
             Sleep(100);
         }
-        fx::require(stable && GetTickCount64()-stable>=3000,"Official Seamless module/window did not become ready; no injection attempted");
+        fx::require(stable && GetTickCount64()-stable>=3000,"Official Seamless module/window did not become ready after early content installation; full runtime was not started");
         preflight(game,root,dir);
         log("Official Seamless DLL present; loading DS2FX pinned bridge after game startup");
-        inject(game_process.value,game_pid,root/"ds2fx_bridge_core.dll");
+        inject(game_process.value,game_pid,root/"ds2fx_bridge_core.dll",false,true);
         log("DS2FX bridge READY game pid="+std::to_string(game_pid)+"; this is load evidence, not multiplayer certification");
         WaitForSingleObject(game_process.value,INFINITE);
         DWORD result=0; GetExitCodeProcess(game_process.value,&result); log("Game exited: "+std::to_string(result));
@@ -194,7 +239,10 @@ int wmain(int argc,wchar_t** argv) {
         log(std::string("BRIDGE FAILED: ")+e.what());
         // Preserve Root Builder's lifetime even when initialization fails. Never kill a live game.
         if(game_process.value && WaitForSingleObject(game_process.value,0)==WAIT_TIMEOUT) {
-            log("Close DS2 normally. Bridge is waiting so Root Builder retains deployment.");
+            if(startup_hold && !early_content_ready)
+                log("Early content setup failed. The game remains suspended before entry. Close DarkSoulsII.exe using Windows Task Manager; bridge is waiting so Root Builder retains deployment.");
+            else
+                log("Close DS2 normally. Bridge is waiting so Root Builder retains deployment.");
             WaitForSingleObject(game_process.value,INFINITE);
         }
         if(launcher_process.value) WaitForSingleObject(launcher_process.value,INFINITE);
