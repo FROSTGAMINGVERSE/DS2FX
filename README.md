@@ -4,7 +4,7 @@ By FROST FX. A native framework for the supported Windows x64 Dark Souls II: Sch
 
 ## Downloads
 
-- [DS2FX Core 0.5.42-alpha.1](https://github.com/FROSTGAMINGVERSE/DS2FX/releases/tag/core-0.5.42-alpha.1): shared loader, Forge menu, public D3D11 graphics callbacks and SDK.
+- [DS2FX Core 0.5.46-alpha.1](https://github.com/FROSTGAMINGVERSE/DS2FX/releases/tag/core-0.5.46-alpha.1): shared loader, Forge menu, public D3D11 graphics callbacks and SDK.
 - [DS2 Wearable Lantern 1.0.9](https://www.nexusmods.com/darksouls2/mods/1773): separate optional right-hip light; restores required bonfire-delivery metadata.
 - [DS2 Remastered HUD 0.1.28](https://www.nexusmods.com/darksouls2/mods/1774): separate optional player HUD.
 

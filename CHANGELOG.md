@@ -2,6 +2,7 @@
 
 ## 2026-10-18 - Core 0.5.46-alpha.1
 
+- Published [Core 0.5.46-alpha.1 on GitHub](https://github.com/FROSTGAMINGVERSE/DS2FX/releases/tag/core-0.5.46-alpha.1) and updated the current download link. The known shutdown and popup limitations below remain.
 - Install manifest-audited content routes before the verified official Seamless child enters its executable. The unified launcher owns one additional suspension of the official launcher's already suspended primary thread, initializes content only, then releases exactly that suspension. Official Seamless files remain unchanged.
 - Retain the same hook and re-audit the effective content selection during full runtime initialization. Reject changed roots, routes or hashes; use bounded game-relative targets and preserve the original resolver's result. Optional bounded request diagnostics remain off by default.
 - Keep the startup hold and Root Builder lifetime while remote initialization is pending or fails. A slow initializer crossing 20 seconds is awaited instead of allowing partial startup; full runtime readiness receives a fresh timeout after early content completes.
